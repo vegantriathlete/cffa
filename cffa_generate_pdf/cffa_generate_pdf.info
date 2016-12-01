@@ -1,0 +1,4 @@
+name = CFFA Generate PDF
+description = Generate PDFs from different sources
+core = 7.x
+package = Carnegie Fund for Authors

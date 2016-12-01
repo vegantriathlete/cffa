@@ -1,0 +1,64 @@
+<?php
+
+/**
+ * Implements hook_cron().
+ */
+function cffa_cron_reject_applications_cron() {
+  // Declare the queue your worker function will use
+  $queue = DrupalQueue::get('cffa_cron_reject_applications');
+
+  // Prepare the items to be added to the queue
+  // Look for Sponsorships whose Promotion Date range is expired
+  $query = 'SELECT n.nid, su.field_submitted_value
+            FROM {node} n
+            LEFT JOIN {field_data_field_status} st
+              ON st.entity_id = n.nid
+            LEFT JOIN {field_data_field_submitted} su
+              ON su.entity_id = n.nid
+            WHERE st.field_status_value = :incomplete';
+  $query_args = array(':incomplete' => 4);
+  $results = db_query($query, $query_args);
+  foreach ($results as $result) {
+    $submitted = cffa_convert_submitted_date($result->field_submitted_value);
+    $interval = 182 * 24 * 60 * 60; // 182 days is approximately six months
+    $grant_application_expired_date = $submitted + $interval;
+    $now = time();
+    if ($grant_application_expired_date < $now) {
+      // Add the node to the queue.
+      // Note: There is a very small chance that the NID is already in the queue
+      //       and hadn't been processed on the last cron run. No harm will occur
+      //       if it gets processed again. All that the worker callback does is
+      //       set the workflow status to Rejected.
+      $queue->createItem($result->nid);
+    }
+  }
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function cffa_cron_reject_applications_cron_queue_info() {
+  // Define the worker callbacks and queues that this module uses
+  // Time is specified in seconds and determines the amount of
+  // processing time to which the worker callback is limited within
+  // each cron run.
+  $queues['cffa_cron_reject_applications'] = array(
+    'worker callback' => 'cffa_cron_reject_application',
+    'time' => 60,
+  );
+  return $queues;
+}
+
+/**
+ * Worker callback to process incomplete applications
+ *
+ * @param $nid - The nid of the grant application to set to Rejected
+ */
+function cffa_cron_reject_application($nid) {
+  // Running a db_update does not function as desired.
+  $node = node_load($nid);
+  $account = user_load($node->uid);
+  // Using the rules event allows us to force the transition and bypass
+  // any of the checks that Workflow would do.
+  rules_invoke_event('cffa_reject_incomplete_application', $account, $node);
+}

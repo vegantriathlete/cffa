@@ -1,0 +1,8 @@
+name = Carnegie Fund for Authors
+description = Main module to house utility and "glue" functions
+core = 7.x
+package = Carnegie Fund for Authors
+
+scripts[] = js/cffa.js
+
+dependencies[] = realname

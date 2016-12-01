@@ -1,0 +1,6 @@
+name = CFfA Trustee Admin Dashboard
+description = Presents the trustee administrator dashboard
+core = 7.x
+package = Carnegie Fund for Authors
+
+dependencies[] = rules

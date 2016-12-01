@@ -1,0 +1,4 @@
+name = CFfA Trustee Dashboard
+description = Presents the trustee dashboard
+core = 7.x
+package = Carnegie Fund for Authors

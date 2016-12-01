@@ -1,0 +1,264 @@
+<?php
+
+/**
+ * @file
+ * Main module for utility and "glue" functions
+ *
+ */
+
+/**
+ * Implements hook_user_login
+ */
+function cffa_user_login(&$edit, $account) {
+  // Ensure that the user is not arriving via the password reset function
+  if (!isset($_POST['form_id']) || $_POST['form_id'] != 'user_pass_reset') {
+    if (in_array('Applicant', $account->roles) && module_exists('cffa_app_dash')) {
+      $_GET['destination'] = 'cffa/app-dash';
+    }
+    elseif (in_array('Trustee', $account->roles) && module_exists('cffa_trustee_dash')) {
+      $_GET['destination'] = 'cffa/trustee-dash';
+    }
+    elseif (in_array('Trustee Administrator', $account->roles) && module_exists('cffa_tadmin_dash')) {
+      $_GET['destination'] = 'cffa/tadmin-dash';
+    }
+  }
+}
+
+/**
+ * Implements hook_field_collection_item_presave().
+ */
+function cffa_field_collection_item_presave(FieldCollectionItemEntity $field_collection_item) {
+  global $user;
+  if (!isset($field_collection_item->field_comment_author[LANGUAGE_NONE][0])) {
+    $account = user_load($user->uid);
+    $time_stamp = date('F j, Y \a\t g:ia');
+    if (isset($account->field_first_name[LANGUAGE_NONE][0]['safe_value'])) {
+      if (isset($account->field_last_name[LANGUAGE_NONE][0]['safe_value'])) {
+        $field_collection_item->field_comment_author[LANGUAGE_NONE][0]['value'] = $account->field_first_name[LANGUAGE_NONE][0]['value'] . ' ' . $account->field_last_name[LANGUAGE_NONE][0]['value'] . ' on ' . $time_stamp;
+      }
+      else {
+        $field_collection_item->field_comment_author[LANGUAGE_NONE][0]['value'] = $account->field_first_name[LANGUAGE_NONE][0]['value'] . ' on ' . $time_stamp;
+      }
+    }
+    else {
+      $field_collection_item->field_comment_author[LANGUAGE_NONE][0]['value'] = $account->name . ' on ' . $time_stamp;
+    }
+  }
+}
+
+/**
+ * Implements hook_node_presave().
+ */
+function cffa_node_presave($node) {
+  if (isset($node->field_status[LANGUAGE_NONE][0]['value']) && $node->field_status[LANGUAGE_NONE][0]['value'] == 3 && !isset($node->field_submitted[LANGUAGE_NONE][0]['value'])) {
+    $node->field_submitted[LANGUAGE_NONE][0]['value'] = date('F j, Y \a\t g:ia');
+  }
+}
+
+/**
+ * Implements hook_node_access().
+ */
+function cffa_node_access($node, $op, $account) {
+  $node_type = is_object($node) ? $node->type : $node;
+  $node_author = is_object($node) ? $node->uid : NULL;
+
+  // Trustee can't edit a grant application
+  if (isset($node->type) && $node->type == 'grant_application' && $op == 'update' && in_array('Trustee', $account->roles)) {
+    return NODE_ACCESS_DENY;
+  }
+
+  if ($node_type == 'further_documentation') {
+    if (!user_access('generate more info letter', $account) && ($account->uid != $node_author)) {
+      return NODE_ACCESS_DENY;
+    }
+  }
+
+  return NODE_ACCESS_IGNORE;
+}
+
+/**
+ * Implements hook_menu_alter().
+ */
+function cffa_menu_alter(&$items) {
+  $items['node/add/grant-application']['access callback'] = 'cffa_create_grant_application_access';
+}
+
+/**
+ * Access callback to create Grant Application
+ *
+ * Determines whether the current user may perform the operation on the node.
+ * Note: This should only be called upon node/add/grant-application.
+ *
+ * @param $op
+ *   The operation to be performed on the node. Possible values are:
+ *   - "view"
+ *   - "update"
+ *   - "delete"
+ *   - "create"
+ * @param $node
+ *   The node object on which the operation is to be performed, or node type
+ *   (e.g. 'forum') for "create" operation.
+ * @param $account
+ *   Optional, a user object representing the user for whom the operation is to
+ *   be performed. Determines access for a user other than the current user.
+ *
+ * @return
+ *   TRUE if the operation may be performed, FALSE otherwise.
+ */
+function cffa_create_grant_application_access($op, $node, $account = NULL) {
+  if ($op == 'create') {
+    // If no user object is supplied, the access check is for the current user.
+    if (empty($account)) {
+      $account = $GLOBALS['user'];
+    }
+    if (in_array('Trustee Administrator', $account->roles) || in_array('administrator', $account->roles)) {
+      return TRUE;
+    }
+    $query = 'SELECT su.field_submitted_value, st.field_status_value
+              FROM {node} n
+              LEFT JOIN {field_data_field_status} st
+                ON st.entity_id = n.nid
+              LEFT JOIN {field_data_field_submitted} su
+                ON su.entity_id = n.nid
+              WHERE n.uid = :uid';
+    $query_args = array(':uid' => $account->uid);
+    $access = TRUE;
+    $results = db_query($query, $query_args);
+    foreach ($results as $result) {
+      $submitted = cffa_convert_submitted_date($result->field_submitted_value);
+      $interval = 365 * 24 * 60 * 60;
+      $next_allowed_date = $submitted + $interval;
+      $now = time();
+      if ($result->field_status_value != 6 && $result->field_status_value != 7) {
+        $access = FALSE;
+        break;
+      }
+      elseif ($next_allowed_date > $now) {
+        $access = FALSE;
+        break;
+      }
+    }
+    return $access;
+  }
+  else {
+    return node_access($op, $node, $account);
+  }
+}
+
+/**
+ * Convert the submitted date into a Unix time stamp
+ *
+ * @param string $submitted
+ *   A date in "F j, Y \a\t g:ia" format
+ */
+function cffa_convert_submitted_date($submitted) {
+  if (!$submitted) {
+    $date = time();
+  }
+  else {
+    $length = strpos($submitted, ' at');
+    $input_date = substr($submitted, 0, $length);
+    $date = strtotime($input_date);
+  }
+  return $date;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_form_grant_application_node_form_alter(&$form, &$form_state, $form_id) {
+  $form['actions']['submit']['#submit'] = array_merge($form['actions']['submit']['#submit'], array('cffa_form_submit'));
+}
+
+/**
+ * Tweak the system message when creating or updating a Grant Application
+ *
+ * Note: This logic relies on assumptions that are not robust!
+ */
+function cffa_form_submit($form, &$form_state) {
+  $messages = drupal_get_messages('status');
+  foreach ($messages['status'] as $message) {
+    drupal_set_message(substr(str_replace(array('<em', '</em'), array('<span', '</span'), $message), 17));
+  }
+}
+
+/**
+ * Implements hook_form_form_ID_alter().
+ */
+function cffa_form_user_pass_reset_alter(&$form, &$form_state, $form_id) {
+  if (isset($form['message']['#markup'])) {
+    $form['message']['#markup'] = str_replace(array('<em', '</em'), array('<span', '</span'), $form['message']['#markup']);
+    preg_match_all("|<span[^>]*>([^<>]*)<\/span>|", $form['message']['#markup'], $matches);
+    // Checking all of these conditions is meant to give some reassurance that we are
+    // capturing the right data.
+    // $matches[0][0] should be the user name
+    // $matches[0][1] should be the expiration date
+    // arg 0 should be the user ID
+    // arg 1 should be a timestamp
+    // arg 2 should be the hashed password
+    if (isset($matches[0][0]) && isset($matches[0][1]) && isset($form_state['build_info']['args'][0]) && isset($form_state['build_info']['args'][1]) && isset($form_state['build_info']['args'][2])) {
+      $account = user_load($form_state['build_info']['args'][0]);
+      $form['message']['#markup'] = str_replace($matches[0][0], check_plain($account->realname), $form['message']['#markup']);
+    }
+  }
+}
+
+/**
+ * Validate a date
+ * @param $element
+ *   A text field to be validated against MM/DD/YYYY format
+ */
+function cffa_validate_date_field($element, $form_state) {
+  if (trim($element['value']['#value']) != '') {
+    $date_parts = explode('/', $element['value']['#value']);
+    if (!checkdate($date_parts[0], $date_parts[1], $date_parts[2])) {
+      form_error($element, t('@date is not a valid date. You must enter a valid date in MM/DD/YYYY format', array('@date' => $element['value']['#value'])));
+    }
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_form_user_profile_form_alter(&$form, &$form_state, $form_id) {
+  if (isset($form['account']['current_pass']['#description'])) {
+    $form['account']['current_pass']['#description'] = t('Your password is case sensitive. !description', array('!description' => $form['account']['current_pass']['#description']));
+  }
+  $form['account']['mail']['#description'] = t('A valid e-mail address. All e-mails from our system will be sent to this address. Your e-mail address will not be made public.');
+  $form['account']['pass']['#description'] = t('!description Your password is case sensitive.', array('!description' => $form['account']['pass']['#description']));
+  if (!user_access('administer users')) {
+    $form['#after_build'][] = 'cffa_user_profile_form_after_build';
+  }
+}
+
+/**
+ * Hide the Contact Settings fieldset
+ */
+function cffa_user_profile_form_after_build($element, &$form_state) {
+  $element['contact']['#access'] = FALSE;
+  return $element;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_form_user_register_form_alter(&$form, $form_state, $form_id) {
+  $form['account']['mail']['#description'] = t('A valid e-mail address. All e-mails from our system will be sent to this address. Your e-mail address will not be made public.');
+  $form['#submit'] = array_merge($form['#submit'], array('cffa_user_register_form_submit'));
+}
+
+/**
+ * Add a message about checking spam folder
+ */
+function cffa_user_register_form_submit($form, &$form_state) {
+  drupal_set_message(t('Note: If you don\'t receive a welcome message in your email inbox within a few minutes, please check your spam folder.'));
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_form_user_login_alter(&$form, $form_state, $form_id) {
+  $form['name']['#title'] = t('E-mail');
+  $form['name']['#description'] = t('Enter your e-mail address.');
+  $form['pass']['#description'] = t('Your password is case sensitive.');
+}

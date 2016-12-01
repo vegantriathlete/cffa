@@ -1,0 +1,279 @@
+<?php
+
+/**
+ * @file
+ * Applicant Dashboard primary file
+ *
+ * This will hold most of the logic for presenting the applicant
+ * dashboard. There may also be some .inc files that will hold
+ * some other code just to improve organization.
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function cffa_app_dash_permission() {
+  return array(
+    'access applicant dash' => array (
+      'title' => t('Access the applicant dashboard'),
+      'description' => t('Allows a user to view a personalized applicant dashboard.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function cffa_app_dash_menu() {
+  $items['cffa/app-dash'] = array (
+    'title' => 'Applicant Dashboard',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('cffa_app_dash_main_form'),
+    'access arguments' => array('access applicant dash'),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Create the main applicant dashboard
+ */
+function cffa_app_dash_main_form($form, &$form_state) {
+  $account = user_load($GLOBALS['user']->uid);
+  $first_name = $account->field_first_name[LANGUAGE_NONE][0]['value'];
+  $form = array();
+  $form['welcome_message'] = array(
+    '#type' => 'item',
+    '#title' => t('Welcome, @user.', array('@user' => $first_name)),
+  );
+  return $form;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_app_dash_form_grant_application_node_form_alter(&$form, &$form_state, $form_id) {
+  if (in_array('Applicant', $GLOBALS['user']->roles)) {
+    cffa_app_dash_rewrite_add_another_item($form, $form_state);
+    $form['field_status']['#access'] = FALSE;
+    $form['field_status'][LANGUAGE_NONE]['#required'] = FALSE;
+    $form['actions']['submit']['#value'] = t('Submit application');
+    $form['actions']['submit']['#submit'] = array_merge(array('cffa_app_dash_form_submit'), $form['actions']['submit']['#submit']);
+    $form['#attached']['js'][] = drupal_get_path('module', 'cffa_app_dash') . '/js/cffa_app_dash.js';
+    $form['actions']['next'] = array(
+      '#type' => 'markup',
+      '#markup' => l(t('Next'), '#', array('attributes' => array('id' => 'next-button', 'class' => 'button'), 'fragment' => '', 'external' => TRUE)),
+    );
+    $form['actions']['draft'] = array(
+      '#type' => 'submit',
+      '#value' => t('Save as draft'),
+      '#submit' => array(
+        'cffa_app_dash_form_submit',
+        'node_form_submit',
+        'cffa_form_submit',
+      ),
+    );
+    $form['#validate'][] = 'cffa_app_dash_form_validate';
+  }
+  $form['field_birth_date'][LANGUAGE_NONE][0]['#element_validate'][] = 'cffa_validate_date_field';
+}
+
+/**
+ * Change the "Add another item" text to "Add more"
+ */
+function cffa_app_dash_rewrite_add_another_item(&$form, $form_state) {
+  foreach ($form_state['field'] as $field => $value) {
+    if (isset($form[$field][LANGUAGE_NONE]['add_more']['#value'])) {
+      $form[$field][LANGUAGE_NONE]['add_more']['#value'] = t('Add more');
+    }
+  }
+}
+
+/**
+ * Bypass validation when submitting as a draft or deleting the application
+ */
+function cffa_app_dash_form_validate($form, $form_state) {
+  if ($form_state['clicked_button']['#id'] == 'edit-draft' || $form_state['clicked_button']['#id'] == 'edit-delete') {
+    form_clear_error();
+    drupal_get_messages('error');
+  }
+  elseif ($form_state['clicked_button']['#id'] == 'edit-submit') {
+    cffa_app_dash_validate_required_fields($form, $form_state);
+  }
+}
+
+/**
+ * Validate the "required" fields
+ *
+ * The save as draft functionality was not saving the values of the
+ * field collection fields when there were required fields that hadn't
+ * been filled in. As a workaround, we are not marking any fields as required.
+ * Instead, when the applicant chooses to submit the application we will
+ * check that they have filled in all the fields that we have told them
+ * are required for submission.
+ */
+function cffa_app_dash_validate_required_fields($form, $form_state) {
+  if (!isset($form_state['values']['field_family_status'][LANGUAGE_NONE][0]['value']) || $form_state['values']['field_family_status'][LANGUAGE_NONE][0]['value'] == '') {
+    form_set_error('field_family_status', t('You must indicate your Marital Status prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_birth_date'][LANGUAGE_NONE][0]['value']) || $form_state['values']['field_birth_date'][LANGUAGE_NONE][0]['value'] == '') {
+    form_set_error('field_birth_date', t('You must indicate your Birth Date prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_current_writing_status'][LANGUAGE_NONE][0]['value']) || $form_state['values']['field_current_writing_status'][LANGUAGE_NONE][0]['value'] == '') {
+    form_set_error('field_current_writing_status', t('You must indicate your Current Writing Status prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_employment_status'][LANGUAGE_NONE][0]['value']) || $form_state['values']['field_employment_status'][LANGUAGE_NONE][0]['value'] == '') {
+    form_set_error('field_employment_status', t('You must indicate your Employment Status prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_grantee_income'][LANGUAGE_NONE][0]['value']) || trim($form_state['values']['field_grantee_income'][LANGUAGE_NONE][0]['value']) == '') {
+    form_set_error('field_grantee_income', t('You must indicate your Annual Income prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_insurance_company'][LANGUAGE_NONE][0]['value']) || trim($form_state['values']['field_insurance_company'][LANGUAGE_NONE][0]['value']) == '') {
+    form_set_error('field_insurance_company', t('You must indicate whether you have health insurance prior to submitting your application.'));
+  }
+  $life_insurance_blank = TRUE;
+  foreach ($form_state['values']['field_life_insurance'][LANGUAGE_NONE] as $index => $value) {
+    if (isset($value['value']) && trim($value['value']) != '') {
+      $life_insurance_blank = FALSE;
+      break;
+    }
+  }
+  if ($life_insurance_blank) {
+    form_set_error('field_life_insurance', t('You must indicate whether you have life insurance prior to submitting your application.'));
+  }
+  $bank_information_blank = TRUE;
+  foreach ($form_state['values']['field_bank_information'][LANGUAGE_NONE] as $index => $value) {
+    if (isset($value['field_type_of_account'][LANGUAGE_NONE][0]['value']) && trim($value['field_type_of_account'][LANGUAGE_NONE][0]['value']) != '') {
+      $bank_information_blank = FALSE;
+      break;
+    }
+  }
+  if ($bank_information_blank) {
+    form_set_error('field_bank_information', t('You must indicate your Bank Information prior to submitting your application.'));
+  }
+  $property_value_blank = TRUE;
+  foreach ($form_state['values']['field_property_value'][LANGUAGE_NONE] as $index => $value) {
+    if (isset($value['value']) && trim($value['value']) != '') {
+      $property_value_blank = FALSE;
+      break;
+    }
+  }
+  if ($property_value_blank) {
+    form_set_error('field_property_value', t('You must indicate the value of any property you own prior to submitting your application.'));
+  }
+  $investments_blank = TRUE;
+  foreach ($form_state['values']['field_investments'][LANGUAGE_NONE] as $index => $value) {
+    if (isset($value['value']) && trim($value['value']) != '') {
+      $investments_blank = FALSE;
+      break;
+    }
+  }
+  if ($investments_blank) {
+    form_set_error('field_investments', t('You must indicate the value of any investments you own prior to submitting your application.'));
+  }
+  $vehicle_information_blank = TRUE;
+  foreach ($form_state['values']['field_vehicle_information'][LANGUAGE_NONE] as $index => $value) {
+    if (isset($value['field_make'][LANGUAGE_NONE][0]['value']) && trim($value['field_make'][LANGUAGE_NONE][0]['value']) != '') {
+      $vehicle_information_blank = FALSE;
+      break;
+    }
+  }
+  if ($vehicle_information_blank) {
+    form_set_error('field_vehicle_information', t('You must provide information about any vehicles you own prior to submitting your application.'));
+  }
+  $book_information_blank = TRUE;
+  foreach ($form_state['values']['field_book_information'][LANGUAGE_NONE] as $index => $value) {
+    if (isset($value['field_book_name'][LANGUAGE_NONE][0]['value']) && trim($value['field_book_name'][LANGUAGE_NONE][0]['value']) != '') {
+      $book_information_blank = FALSE;
+      break;
+    }
+  }
+  if ($book_information_blank) {
+    form_set_error('field_book_information', t('You must list at least one published book prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_reason_applying'][LANGUAGE_NONE][0]['value']) || trim($form_state['values']['field_reason_applying'][LANGUAGE_NONE][0]['value']) == '') {
+    form_set_error('field_reason_applying', t('You must indicate why you are applying for this grant prior to submitting your application.'));
+  }
+  if (!isset($form_state['values']['field_signature'][LANGUAGE_NONE][0]['value']) || trim($form_state['values']['field_signature'][LANGUAGE_NONE][0]['value']) == '') {
+    form_set_error('field_signature', t('You must sign your name prior to submitting your application.'));
+  }
+}
+
+function cffa_app_dash_form_submit($form, &$form_state) {
+  switch ($form_state['clicked_button']['#id']) {
+    case 'edit-submit':
+      $form_state['values']['field_status'][LANGUAGE_NONE][0]['value'] = 3;
+      $grant_application = node_load($form_state['values']['nid']);
+      $account = user_load($GLOBALS['user']->uid);
+      if ($grant_application) {
+        rules_invoke_event('cffa_application_submitted', $account, $grant_application);
+      }
+      else {
+        rules_invoke_event('cffa_new_application_submitted', $account);
+      }
+      break;
+    case 'edit-draft':
+      $form_state['values']['field_status'][LANGUAGE_NONE][0]['value'] = 2;
+      break;
+  }
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function cffa_app_dash_block_info() {
+  $blocks = array(
+    'create_grant' => array(
+      'info' => t('Link to create a Grant Application'),
+      'cache' => DRUPAL_NO_CACHE,
+    ),
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function cffa_app_dash_block_view($delta) {
+  $block = array();
+
+  switch ($delta) {
+    case 'create_grant':
+      $block['subject'] = t('Start a new grant application');
+      $block['content'] = cffa_app_dash_create_grant_application();
+      break;
+  }
+
+  return $block;
+}
+
+/**
+ * Define contents of the create_grant block
+ */
+function cffa_app_dash_create_grant_application() {
+  $create_grant = cffa_create_grant_application_access('create', 'grant_application');
+  if ($create_grant) {
+    $output = l(t('Start a new application'), 'node/add/grant-application');
+  }
+  else {
+    $output = t('You are not allowed to submit another grant at this time.');
+  }
+  return $output;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_app_dash_form_user_profile_form_alter(&$form, &$form_state, $form_id) {
+  if (in_array('Applicant', $GLOBALS['user']->roles)) {
+    $form['#submit'] = array_merge(array('cffa_app_dash_user_profile_form_submit'), $form['#submit']);
+  }
+}
+
+/**
+ * Redirect the user to the Applicant Dashboard
+ */
+function cffa_app_dash_user_profile_form_submit($form, &$form_state) {
+  $form_state['redirect'] = 'cffa/app-dash';
+}

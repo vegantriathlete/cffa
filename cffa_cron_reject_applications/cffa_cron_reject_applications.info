@@ -1,0 +1,7 @@
+name = CFfA Reject Applications
+description = Cron job to set Incomplete applications older than 6 months to Rejected
+core = 7.x
+package = Carnegie Fund for Authors
+
+dependencies[] = cffa
+dependencies[] = rules

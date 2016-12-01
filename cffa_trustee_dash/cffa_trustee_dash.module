@@ -1,0 +1,51 @@
+<?php
+
+/**
+ * @file
+ * Trustee Dashboard primary file
+ *
+ * This will hold most of the logic for presenting the trustee
+ * dashboard. There may also be some .inc files that will hold
+ * some other code just to improve organization.
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function cffa_trustee_dash_permission() {
+  return array(
+    'access trustee dash' => array (
+      'title' => t('Access the trustee dashboard'),
+      'description' => t('Allows a user to view the trustee dashboard.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function cffa_trustee_dash_menu() {
+  $items['cffa/trustee-dash'] = array (
+    'title' => 'Trustee Dashboard',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('cffa_trustee_dash_main_form'),
+    'access arguments' => array('access trustee dash'),
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Create the main trustee dashboard
+ */
+function cffa_trustee_dash_main_form($form, &$form_state) {
+  $account = user_load($GLOBALS['user']->uid);
+  $first_name = $account->field_first_name[LANGUAGE_NONE][0]['value'];
+  $form = array();
+  $form['welcome_message'] = array(
+    '#type' => 'item',
+    '#title' => t('Welcome, @user.', array('@user' => $first_name)),
+  );
+  return $form;
+}

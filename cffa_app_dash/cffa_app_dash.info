@@ -1,0 +1,4 @@
+name = CFfA Applicant Dashboard
+description = Presents the applicant dashboard
+core = 7.x
+package = Carnegie Fund for Authors

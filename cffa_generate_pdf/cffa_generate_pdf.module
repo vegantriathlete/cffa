@@ -1,0 +1,186 @@
+<?php
+
+/**
+ * @file
+ * CFFA Generate PDF
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function cffa_generate_pdf_menu() {
+  $items['cffa/pdf/request-more-info/%node'] = array(
+    'title' => 'Create a Request More Information Letter',
+    'page callback' => 'cffa_generate_pdf_more_info_letter',
+    'page arguments' => array(3),
+    'access arguments' => array('generate more info letter'),
+    'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function cffa_generate_pdf_permission() {
+  return array(
+    'generate more info letter' => array(
+      'title' => t('Generate a Request for more Information Letter'),
+    ),
+  );
+}
+
+/**
+ * Create a Request for more Information Letter
+ *
+ * @param object $further_documentation
+ *   A fully loaded Further Documentation node
+ */
+function cffa_generate_pdf_more_info_letter($further_documentation) {
+
+  if ($further_documentation->type == 'further_documentation') {
+    $tcpdf_path = libraries_get_path('tcpdf');
+    require_once($tcpdf_path . '/tcpdf.php');
+    $request_letter = '';
+    $report_title = '';
+    $report_subject = $request_letter;
+
+    // Create new PDF document
+    $pdf = new TCPDF('P', PDF_UNIT, PDF_PAGE_FORMAT, true, 'UTF-8', false);
+
+    // Set document information
+    $pdf->SetCreator(PDF_CREATOR);
+    $pdf->SetAuthor('Carnegie Fund for Authors');
+    $pdf->SetTitle($report_title);
+    $pdf->SetSubject($report_subject);
+
+    // Set default header data
+    //$pdf->SetHeaderData(PDF_HEADER_LOGO, PDF_HEADER_LOGO_WIDTH, $report_title, $report_subject);
+
+    // Set header and footer fonts
+    //$pdf->setHeaderFont(Array(PDF_FONT_NAME_MAIN, '', PDF_FONT_SIZE_MAIN));
+    //$pdf->setFooterFont(Array(PDF_FONT_NAME_DATA, '', PDF_FONT_SIZE_DATA));
+
+    // Set default monospaced font
+    $pdf->SetDefaultMonospacedFont(PDF_FONT_MONOSPACED);
+
+    // Set margins
+    $pdf->SetMargins(PDF_MARGIN_LEFT, PDF_MARGIN_TOP, PDF_MARGIN_RIGHT);
+    //$pdf->SetHeaderMargin(PDF_MARGIN_HEADER);
+    //$pdf->SetFooterMargin(PDF_MARGIN_FOOTER);
+
+    // Set auto page breaks
+    $pdf->SetAutoPageBreak(TRUE, PDF_MARGIN_BOTTOM);
+
+    // Set image scale factor
+    $pdf->setImageScale(PDF_IMAGE_SCALE_RATIO);
+
+    // Set some language-dependent strings (optional)
+    if (@file_exists(dirname(__FILE__).'/lang/eng.php')) {
+        require_once(dirname(__FILE__).'/lang/eng.php');
+        $pdf->setLanguageArray($l);
+    }
+
+    // Set font
+    $pdf->SetFont('helvetica', '', 12);
+
+    // Add a page
+    $pdf->AddPage();
+
+    // Create the Header HTML content
+    if (isset($further_documentation->field_letterhead[LANGUAGE_NONE][0]['value'])) {
+      $letterhead = explode("\n", $further_documentation->field_letterhead[LANGUAGE_NONE][0]['value']);
+      $output = implode('<br>', $letterhead);
+      $html = cffa_generate_pdf_create_style_sheet();
+      $html .= '<div class="letterhead">';
+      $html .= $output;
+      $html .= '</div>';
+      $pdf->writeHTML($html, true, false, true, false, '');
+
+      $html = '<br />';
+      $pdf->writeHTML($html, true, false, true, false, '');
+    }
+
+    // Create the greeting
+    $account = user_load($further_documentation->uid);
+    $html = cffa_generate_pdf_create_style_sheet();
+    $html .= '<div class="salutation">';
+    $html .= t('Dear @name:', array('@name' => $account->realname));
+    $html .= '</div>';
+    $pdf->writeHTML($html, true, false, true, false, '');
+    $html = '<br />';
+    $pdf->writeHTML($html, true, false, true, false, '');
+
+    // Create the body HTML content
+    if (isset($further_documentation->body[LANGUAGE_NONE][0]['value'])) {
+      $body = explode("\n", $further_documentation->body[LANGUAGE_NONE][0]['value']);
+      $output = implode('<br>', $body);
+      $html = cffa_generate_pdf_create_style_sheet();
+      $html .= '<div class="body">';
+      $html .= $output;
+      $html .= '</div>';
+      $pdf->writeHTML($html, true, false, true, false, '');
+      $html = '<br />';
+      $pdf->writeHTML($html, true, false, true, false, '');
+    }
+
+    if (isset($further_documentation->field_requested_documentation[LANGUAGE_NONE][0]['value'])) {
+      $requested_documentation = explode("\n", $further_documentation->field_requested_documentation[LANGUAGE_NONE][0]['value']);
+      $output = implode('<br>', $requested_documentation);
+      $html = cffa_generate_pdf_create_style_sheet();
+      $html .= '<div class="body additional-comments">';
+      $html .= $output;
+      $html .= '</div>';
+      $pdf->writeHTML($html, true, false, true, false, '');
+      $html = '<br />';
+      $pdf->writeHTML($html, true, false, true, false, '');
+    }
+
+    // Create the footer HTML content
+    if (isset($further_documentation->field_footer[LANGUAGE_NONE][0]['value'])) {
+      $footer = explode("\n", $further_documentation->field_footer[LANGUAGE_NONE][0]['value']);
+      $output = implode('<br>', $footer);
+      $html = cffa_generate_pdf_create_style_sheet();
+      $html .= '<div class="footer">';
+      $html .= $output;
+      $html .= '</div>';
+      $pdf->writeHTML($html, true, false, true, false, '');
+    }
+
+    // reset pointer to the last page
+    $pdf->lastPage();
+
+    //Close and output PDF document
+    $pdf->Output($request_letter . '.pdf', 'I');
+
+  }
+}
+
+/**
+ * Define style sheet
+ *
+ * @return string $html
+ *   The style sheet specifications
+ */
+function cffa_generate_pdf_create_style_sheet() {
+
+  $html = <<<EOF
+<style>
+  * {
+    color: #666666;
+  }
+
+  div.letterhead {
+    font-family: 'Ramaraja', serif;
+    font-weight: bold;
+    text-align: center;
+  }
+
+  div.footer {
+  }
+
+</style>
+EOF;
+
+  return $html;
+}

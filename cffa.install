@@ -1,0 +1,15 @@
+<?php
+
+/**
+ * Implements hook_enable().
+ */
+function cffa_enable() {
+  // Make sure this is fired after email_registration.
+  db_update('system')
+    ->fields(array(
+      'weight' => 88,
+    ))
+    ->condition('type', 'module')
+    ->condition('name', 'cffa')
+    ->execute();
+}

@@ -1,0 +1,256 @@
+<?php
+
+/**
+ * @file
+ * Trustee Administrator Dashboard primary file
+ *
+ * This will hold most of the logic for presenting the trustee admin
+ * dashboard. There may also be some .inc files that will hold
+ * some other code just to improve organization.
+ */
+
+/**
+ * Implements hook_permission().
+ */
+function cffa_tadmin_dash_permission() {
+  return array(
+    'access trustee admin dash' => array (
+      'title' => t('Access the trustee administrator dashboard'),
+      'description' => t('Allows a user to view the trustee administrator dashboard.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_menu().
+ */
+function cffa_tadmin_dash_menu() {
+  $items['cffa/tadmin-dash'] = array (
+    'title' => 'Trustee Administrator Dashboard',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('cffa_tadmin_dash_main_form'),
+    'access arguments' => array('access trustee admin dash'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['cffa/request-more-info-router/%'] = array (
+    'title' => 'Route the request for more information',
+    'page callback' => 'cffa_route_request_more_information',
+    'page arguments' => array(2),
+    'access arguments' => array('access trustee admin dash'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['cffa/request-more-information/%node'] = array (
+    'title' => 'Request More Information',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('cffa_request_more_information_form', 2),
+    'access arguments' => array('access trustee admin dash'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['admin/config/system/cffa-tadmin/settings'] = array(
+    'title' => 'CFFA Trustee Admin Settings',
+    'description' => 'Configure settings for the Trustee Admin interface',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('cffa_tadmin_settings'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Create the main trustee administrator dashboard
+ */
+function cffa_tadmin_dash_main_form($form, &$form_state) {
+  $account = user_load($GLOBALS['user']->uid);
+  $first_name = $account->field_first_name[LANGUAGE_NONE][0]['value'];
+  $form = array();
+  $form['welcome_message'] = array(
+    '#type' => 'item',
+    '#title' => t('Welcome, @user.', array('@user' => $first_name)),
+  );
+  return $form;
+}
+
+/**
+ * Route the request for more information
+ *
+ * @param integer $nid
+ *   The NID for the Grant Application
+ */
+function cffa_route_request_more_information($nid) {
+  $query = 'SELECT entity_id
+            FROM {field_data_field_grant_application}
+            WHERE bundle = :documentation
+              AND field_grant_application_target_id = :nid';
+  $query_arguments = array(
+    ':documentation' => 'further_documentation',
+    ':nid' => $nid,
+  );
+  $result = db_query($query, $query_arguments)->fetchField(0);
+  if ($result) {
+    drupal_goto(drupal_get_path_alias('node/' . $result));
+  }
+  else {
+    drupal_goto('cffa/request-more-information/' . $nid);
+  }
+}
+
+/**
+ * Create the Request More Information form
+ *
+ * @param object $node
+ *   The fully loaded node object for the Grant Application
+ */
+function cffa_request_more_information_form($form, &$form_state, $node) {
+  $vocabulary = variable_get('cffa_tadmin_documentation_vocabulary', NULL);
+  $terms = taxonomy_get_tree($vocabulary);
+  foreach ($terms as $term) {
+   $options[$term->tid] = check_plain($term->description);
+  }
+  $form = array();
+  $form['missing_items'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Missing items'),
+    '#options' => $options,
+  );
+  $form['additional_message'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Other comments'),
+    '#description' => t('Enter other documentation or include other information you want added to the letter.'),
+  );
+  $form['actions'] = array(
+    '#type' => 'actions',
+  );
+  $form['actions']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Create'),
+  );
+  $form['node'] = array(
+    '#type' => 'value',
+    '#value' => $node,
+  );
+  return $form;
+}
+
+/**
+ * Submit handler for the Request More Information form
+ *
+ * @see cffa_request_more_information_form().
+ */
+function cffa_request_more_information_form_validate($form, &$form_state) {
+  $no_items_selected = TRUE;
+  foreach ($form_state['values']['missing_items'] as $missing_item) {
+    if ($missing_item) {
+      $no_items_selected = FALSE;
+      break;
+    }
+  }
+  if ($no_items_selected && trim($form_state['values']['additional_message']) == '') {
+    form_set_error('', t('You must choose at least one item or enter additional comments.'));
+  }
+}
+
+/**
+ * Submit handler for the Request More Information form
+ *
+ * @see cffa_request_more_information_form().
+ */
+function cffa_request_more_information_form_submit($form, &$form_state) {
+  $grant_application = $form_state['values']['node'];
+  $node = new stdClass();
+  $node->type = 'further_documentation';
+  $node->title = 'Request letter for ' . $grant_application->title;
+  $node->language = LANGUAGE_NONE;
+  node_object_prepare($node);
+  $node->uid = $grant_application->uid;
+  $node->field_grant_application[$node->language][0]['target_id'] = $grant_application->nid;
+  $default = t('Carnegie Fund for Authors' . "\n" . 'Post Office Box 409' . "\n" . 'Lenox Hill Station' . "\n" . 'New York, New York 10021');
+  $node->field_letterhead[$node->language][0]['value'] = variable_get('cffa_tadmin_request_letter_letterhead', $default);
+  $items = '';
+  foreach ($form_state['values']['missing_items'] as $missing_item) {
+    if ($missing_item) {
+      $term = taxonomy_term_load($missing_item);
+      $items .= "\n\n&bull; " . $term->description;
+    }
+  }
+  $default = t('Your recent application for a grant has been received. After a careful review of your application, we find the application to be incomplete. You have either failed to complete questions, or provide information requested on the form, or send in the necessary records substantiating your claim. Specifically, please complete the item(s) mentioned below.');
+  $node->body[$node->language][0]['value'] = variable_get('cffa_tadmin_request_letter_text', $default) . $items;
+  if (trim($form_state['values']['additional_message'])) {
+    $node->field_requested_documentation[$node->language][0]['value'] = $form_state['values']['additional_message'];
+  }
+  $node->field_footer[$node->language][0]['value'] = t('Sincerely,' . "\n\n\n\n" . 'The Carnegie Fund for Authors');
+  $node = node_submit($node); // Prepare node for saving
+  node_save($node);
+  $form_state['redirect'] = 'applications/incomplete';
+  drupal_set_message(t('The request for more documentation: %title has been created. Click the Request more information link in the Incomplete Applications table and you will be taken to the request and be presented with a link to generate the PDF.', array('%title' => $node->title)));
+}
+
+/**
+ * Settings form for ec options
+ */
+function cffa_tadmin_settings($form, &$form_state) {
+  $form = array();
+
+  $default = t('Carnegie Fund for Authors\nPost Office Box 409\nLenox Hill Station\nNew York, New York 10021');
+  $form['cffa_tadmin_request_letter_letterhead'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Letterhead'),
+    '#default_value' => variable_get('cffa_tadmin_request_letter_letterhead', $default),
+    '#description' => t('Enter the organization name and address that should appear at the top of the letter.'),
+  );
+  $default = t('Your recent application for a grant has been received. After a careful review of your application, we find the application to be incomplete. You have either failed to complete questions, or provide information requested on the form, or send in the necessary records substantiating your claim. Specifically, please complete the item(s) mentioned below.');
+  $form['cffa_tadmin_request_letter_text'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Text for the Request More Information Letter'),
+    '#default_value' => variable_get('cffa_tadmin_request_letter_text', $default),
+    '#description' => t('Enter the opening paragraph(s) of the letter. A standard header and footer will be applied. The missing pieces of information will be selected on another form and should not be referenced here.'),
+  );
+
+  $vocabularies = taxonomy_get_vocabularies();
+  $options = array();
+  foreach ($vocabularies as $vocabulary) {
+    $options[$vocabulary->vid] = check_plain($vocabulary->name);
+  }
+  $form['cffa_tadmin_documentation_vocabulary'] = array(
+    '#type' => 'select',
+    '#title' => t('CFFA Documentation Vocabulary'),
+    '#options' => $options,
+    '#default_value' => variable_get('cffa_tadmin_documentation_vocabulary', NULL),
+    '#description' => t('Choose which Drupal Taxonomy specifies CFFA\'s documentation items.'),
+  );
+
+  return system_settings_form($form);
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function cffa_tadmin_dash_form_grant_application_node_form_alter(&$form, &$form_state, $form_id) {
+  if (in_array('Trustee Administrator', $GLOBALS['user']->roles) || in_array('administrator', $GLOBALS['user']->roles)) {
+    $form['actions']['submit']['#submit'] = array_merge($form['actions']['submit']['#submit'], array('cffa_tadmin_dash_form_submit'));
+  }
+}
+
+/**
+ * Custom submit function
+ */
+function cffa_tadmin_dash_form_submit($form, &$form_state) {
+  $grant_application = node_load($form_state['values']['nid']);
+  $account = user_load($grant_application->uid);
+  switch ($form_state['values']['field_status'][LANGUAGE_NONE][0]['value']) {
+    case '4':
+      $form_state['redirect'] = 'applications/incomplete';
+      unset($_GET['destination']);
+      break;
+    case '5':
+      rules_invoke_event('cffa_application_ready_for_review', $account, $grant_application);
+      break;
+    case '6':
+      rules_invoke_event('cffa_application_accepted', $account, $grant_application);
+      break;
+    case '7':
+      rules_invoke_event('cffa_application_rejected', $account, $grant_application);
+      break;
+  }
+}
